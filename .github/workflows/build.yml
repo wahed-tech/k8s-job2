@@ -1,0 +1,78 @@
+name: build
+on:
+  push:
+    branches:
+      - master
+  pull_request:
+    types: [opened, reopened, synchronize, ready_for_review]
+env:
+  TERM: DUMB
+  DEPLOY_TOKEN: ${{ secrets.DEPLOY_TOKEN }}
+jobs:
+  test:
+    if: github.event.pull_request.draft == false
+    runs-on: arc-runner-set
+    steps:
+      - name: Generate GitHub App token
+        id: app-token
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ secrets.RELEASE_BOT_APP_ID }}
+          private-key: ${{ secrets.RELEASE_BOT_APP_PRIVATE_KEY }}
+      - name: Validate App Token
+        run: |
+          if [ -z "${{ steps.app-token.outputs.token }}" ]; then
+            echo "Error: GitHub App token is empty! Check App ID and Private Key secrets."
+            exit 1
+          else
+            echo "GitHub App token generated successfully."
+          fi
+      - uses: actions/checkout@v4
+        with:
+          token: ${{ steps.app-token.outputs.token }}
+          fetch-depth: 0
+      - name: Setup Token
+        run: git config --global url."https://${DEPLOY_TOKEN}:x-oauth-basic@github.com/".insteadOf "https://github.com/"
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          cache-dependency-path: go.sum
+          go-version-file: 'go.mod'
+      - name: Set go flags
+        run: |
+          go env -w GOSUMDB=off
+          go env -w GOPRIVATE=github.com/wahed-tech/
+      - name: Run tests
+        run: make test-codecov-gen-integration
+        env:
+          ENV: TEST
+      - name: Archive code coverage results
+        uses: actions/upload-artifact@v4
+        with:
+          name: code-coverage-report
+          path: coverage.html
+      - name: CodeCov Report
+        uses: k1LoW/octocov-action@v0
+        with:
+          github-token: ${{ steps.app-token.outputs.token }}
+  lint:
+    if: |
+      github.ref_name != 'master' &&
+      github.event.pull_request.draft == false
+    runs-on: arc-runner-set
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup Token
+        run: git config --global url."https://${DEPLOY_TOKEN}:x-oauth-basic@github.com/".insteadOf "https://github.com/"
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: 'go.mod'
+      - name: Set go flags
+        run: |
+          go env -w GOSUMDB=off
+          go env -w GOPRIVATE=github.com/wahed-tech/
+      - name: golangci-lint
+        uses: golangci/golangci-lint-action@v8
+        with:
+          version: latest
